@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>My Cloud Drive</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+  h1 { margin-bottom: 4px; }
+  #userBar { margin-bottom: 24px; color: #444; }
+  #loginBtn, #logoutBtn { padding: 8px 16px; cursor: pointer; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; justify-content: space-between; align-items: center;
+       padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 8px; }
+  li button { margin-left: 8px; padding: 4px 10px; cursor: pointer; }
+  #uploadBox { margin: 20px 0; padding: 16px; border: 1px dashed #aaa; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<h1>My Cloud Drive</h1>
+<div id="userBar">Checking login status...</div>
+
+<div id="app" style="display:none;">
+  <div id="uploadBox">
+    <input type="file" id="fileInput">
+    <button id="uploadBtn">Upload</button>
+  </div>
+  <h3>Your files</h3>
+  <ul id="fileList"></ul>
+</div>
+
+<script>
+  const userBar = document.getElementById('userBar');
+  const app = document.getElementById('app');
+  const fileList = document.getElementById('fileList');
+  const fileInput = document.getElementById('fileInput');
+
+  // Step 1: check if the user is already logged in.
+  async function checkLogin() {
+    const res = await fetch('/auth/me');
+    const data = await res.json();
+
+    if (data.loggedIn) {
+      userBar.innerHTML = `Signed in as <strong>${data.user.name}</strong>
+        (<a href="/auth/logout">Sign out</a>)`;
+      app.style.display = 'block';
+      loadFiles();
+    } else {
+      userBar.innerHTML = `<a href="/auth/google"><button id="loginBtn">Sign in with Google</button></a>`;
+      app.style.display = 'none';
+    }
+  }
+
+  // Step 2: fetch and render the user's file list.
+  async function loadFiles() {
+    const res = await fetch('/files');
+    const data = await res.json();
+    fileList.innerHTML = '';
+
+    data.files.forEach((file) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span>${file.name} (${Math.round(file.size / 1024)} KB)</span>
+        <span>
+          <button data-name="${file.name}" class="shareBtn">Share</button>
+        </span>
+      `;
+      fileList.appendChild(li);
+    });
+
+    // Wire up every "Share" button just created.
+    document.querySelectorAll('.shareBtn').forEach((btn) => {
+      btn.addEventListener('click', () => shareFile(btn.dataset.name));
+    });
+  }
+
+  // Step 3: upload flow — ask backend for a presigned URL, then PUT
+  // the file straight to S3 using that URL.
+  document.getElementById('uploadBtn').addEventListener('click', async () => {
+    const file = fileInput.files[0];
+    if (!file) return alert('Choose a file first.');
+
+    // Ask our backend for a temporary upload link.
+    const urlRes = await fetch('/files/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type }),
+    });
+    const { uploadUrl } = await urlRes.json();
+
+    // Upload the raw file directly to S3 (not through our server).
+    await fetch(uploadUrl, { method: 'PUT', body: file });
+
+    fileInput.value = '';
+    loadFiles();
+  });
+
+  // Step 4: share flow — ask backend for a presigned download URL,
+  // then show it so the user can copy/share it.
+  async function shareFile(filename) {
+    const res = await fetch(`/files/${encodeURIComponent(filename)}/download-url`);
+    const { downloadUrl } = await res.json();
+    prompt('Share this link (valid for 1 hour):', downloadUrl);
+  }
+
+  checkLogin();
+</script>
+
+</body>
+</html>
